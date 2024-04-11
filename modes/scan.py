@@ -97,7 +97,7 @@ async def scan(scheme, host, main_url, form, blindXSS, blindPayload, headers, de
             url = normalize_url(form_data['action'], scheme, host)
             if url == main_url:
                 continue
-            tasks.append(generate_payloads(url, form_data, headers, delay, timeout, encoding, skip))
+            tasks.append(generate_payloads(url, form_data, headers, delay, timeout, encoding, skip))  # Pass missing arguments here
             if blindXSS and blindPayload:
                 blind_params = {name: blindPayload for name in form_data['inputs']}
                 tasks.append(requester(url, blind_params, headers, False, delay, timeout))
