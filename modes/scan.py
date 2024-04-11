@@ -1,9 +1,11 @@
-import copy
 import re
+import copy
+import asyncio
+
 from urllib.parse import urlparse, quote, unquote
 
-from core.checker import checker
 from core.colors import end, green, que
+from core.checker import checker
 import core.config
 from core.config import xsschecker, minEfficiency
 from core.dom import dom
@@ -17,104 +19,86 @@ from core.log import setup_logger
 
 logger = setup_logger(__name__)
 
+def normalize_url(url, scheme, host):
+    if url.startswith(scheme):
+        return url
+    elif url.startswith('//') and url[2:].startswith(host):
+        return scheme + '://' + url[2:]
+    elif url.startswith('/'):
+        return scheme + '://' + host + url
+    elif re.match(r'\w', url[0]):
+        return scheme + '://' + host + '/' + url
 
-def scan(target, paramData, encoding, headers, delay, timeout, skipDOM, skip):
-    GET, POST = (False, True) if paramData else (True, False)
-    # If the user hasn't supplied the root url with http(s), we will handle it
-    if not target.startswith('http'):
-        try:
-            response = requester('https://' + target, {},
-                                 headers, GET, delay, timeout)
-            target = 'https://' + target
-        except:
-            target = 'http://' + target
-    logger.debug('Scan target: {}'.format(target))
-    response = requester(target, {}, headers, GET, delay, timeout).text
+async def analyze_payload(url, params, headers, is_get, delay, payload, positions, timeout, encoding, skip):
+    vect = unquote(payload) if not is_get else payload
+    if core.config.globalVariables['path']:
+        vect = vect.replace('/', '%2F')
+    logger_vector = payload
+    efficiencies = checker(url, params, headers, is_get, delay, vect, positions, timeout, encoding)
+    if not efficiencies:
+        efficiencies = [0] * len(positions)
+    best_efficiency = max(efficiencies)
+    if best_efficiency >= minEfficiency:
+        logger.red_line()
+        logger.good('Payload: %s' % logger_vector)
+        logger.info('Efficiency: %i' % best_efficiency)
+        if not skip:
+            choice = input('%s Would you like to continue scanning? [y/N] ' % que).lower()
+            if choice != 'y':
+                quit()
 
-    if not skipDOM:
-        logger.run('Checking for DOM vulnerabilities')
-        highlighted = dom(response)
-        if highlighted:
-            logger.good('Potentially vulnerable objects found')
-            logger.red_line(level='good')
-            for line in highlighted:
-                logger.no_format(line, level='good')
-            logger.red_line(level='good')
-    host = urlparse(target).netloc  # Extracts host out of the url
-    logger.debug('Host to scan: {}'.format(host))
-    url = getUrl(target, GET)
-    logger.debug('Url to scan: {}'.format(url))
-    params = getParams(target, paramData, GET)
+async def scan_payloads(url, params, headers, is_get, delay, vectors, positions, timeout, encoding, skip):
+    total = sum(len(v) for v in vectors.values())
+    if total == 0:
+        logger.error('No vectors were crafted.')
+        return
+    logger.info('Payloads generated: %i' % total)
+    progress = 0
+    for confidence, vects in vectors.items():
+        for vect in vects:
+            progress += 1
+            logger.run('Progress: %i/%i\r' % (progress, total))
+            await analyze_payload(url, params, headers, is_get, delay, vect, positions, timeout, encoding, skip)
+    logger.no_format('')
+
+async def generate_payloads(url, form_data, headers, delay, timeout, encoding, skip):
+    is_get = form_data['method'] == 'get'
+    params = getParams(url, form_data['inputs'], is_get)
     logger.debug_json('Scan parameters:', params)
     if not params:
         logger.error('No parameters to test.')
-        quit()
-    WAF = wafDetector(
-        url, {list(params.keys())[0]: xsschecker}, headers, GET, delay, timeout)
+        return
+    params_copy = copy.deepcopy(params)
+    params_copy[list(params.keys())[0]] = xsschecker
+    WAF = wafDetector(url, params_copy, headers, is_get, delay, timeout)
     if WAF:
         logger.error('WAF detected: %s%s%s' % (green, WAF, end))
     else:
         logger.good('WAF Status: %sOffline%s' % (green, end))
+    response = await requester(url, {}, headers, is_get, delay, timeout)
+    occurences = htmlParser(response, encoding)
+    positions = occurences.keys()
+    logger.debug('Scan occurrences: {}'.format(occurences))
+    if not occurences:
+        logger.error('No reflection found')
+        return
+    else:
+        logger.info('Reflections found: %i' % len(occurences))
+    logger.run('Analysing reflections')
+    efficiencies = filterChecker(url, params_copy, headers, is_get, delay, occurences, timeout, encoding)
+    logger.debug('Scan efficiencies: {}'.format(efficiencies))
+    vectors = generator(occurences, response.text)
+    await scan_payloads(url, params_copy, headers, is_get, delay, vectors, positions, timeout, encoding, skip)
 
-    for paramName in params.keys():
-        paramsCopy = copy.deepcopy(params)
-        logger.info('Testing parameter: %s' % paramName)
-        if encoding:
-            paramsCopy[paramName] = encoding(xsschecker)
-        else:
-            paramsCopy[paramName] = xsschecker
-        response = requester(url, paramsCopy, headers, GET, delay, timeout)
-        occurences = htmlParser(response, encoding)
-        positions = occurences.keys()
-        logger.debug('Scan occurences: {}'.format(occurences))
-        if not occurences:
-            logger.error('No reflection found')
-            continue
-        else:
-            logger.info('Reflections found: %i' % len(occurences))
-
-        logger.run('Analysing reflections')
-        efficiencies = filterChecker(
-            url, paramsCopy, headers, GET, delay, occurences, timeout, encoding)
-        logger.debug('Scan efficiencies: {}'.format(efficiencies))
-        logger.run('Generating payloads')
-        vectors = generator(occurences, response.text)
-        total = 0
-        for v in vectors.values():
-            total += len(v)
-        if total == 0:
-            logger.error('No vectors were crafted.')
-            continue
-        logger.info('Payloads generated: %i' % total)
-        progress = 0
-        for confidence, vects in vectors.items():
-            for vect in vects:
-                if core.config.globalVariables['path']:
-                    vect = vect.replace('/', '%2F')
-                loggerVector = vect
-                progress += 1
-                logger.run('Progress: %i/%i\r' % (progress, total))
-                if not GET:
-                    vect = unquote(vect)
-                efficiencies = checker(
-                    url, paramsCopy, headers, GET, delay, vect, positions, timeout, encoding)
-                if not efficiencies:
-                    for i in range(len(occurences)):
-                        efficiencies.append(0)
-                bestEfficiency = max(efficiencies)
-                if bestEfficiency == 100 or (vect[0] == '\\' and bestEfficiency >= 95):
-                    logger.red_line()
-                    logger.good('Payload: %s' % loggerVector)
-                    logger.info('Efficiency: %i' % bestEfficiency)
-                    logger.info('Confidence: %i' % confidence)
-                    if not skip:
-                        choice = input(
-                            '%s Would you like to continue scanning? [y/N] ' % que).lower()
-                        if choice != 'y':
-                            quit()
-                elif bestEfficiency > minEfficiency:
-                    logger.red_line()
-                    logger.good('Payload: %s' % loggerVector)
-                    logger.info('Efficiency: %i' % bestEfficiency)
-                    logger.info('Confidence: %i' % confidence)
-        logger.no_format('')
+async def scan(scheme, host, main_url, form, blindXSS, blindPayload, headers, delay, timeout, encoding, skipDOM, skip):
+    if form:
+        tasks = []
+        for form_url, form_data in form.items():
+            url = normalize_url(form_data['action'], scheme, host)
+            if url == main_url:
+                continue
+            tasks.append(generate_payloads(url, form_data, headers, delay, timeout, encoding, skip))
+            if blindXSS and blindPayload:
+                blind_params = {name: blindPayload for name in form_data['inputs']}
+                tasks.append(requester(url, blind_params, headers, False, delay, timeout))
+        await asyncio.gather(*tasks)
