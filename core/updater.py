@@ -31,7 +31,7 @@ def updater():
         if choice != 'n':
             logger.run('Updating XSStrike')
             os.system(
-                'git clone --quiet https://github.com/s0md3v/XSStrike %s' % (folder))
+                'git clone --quiet https://github.com/Dyst0rti0n/XSStrike %s' % (folder))
             os.system('cp -r %s/%s/* %s && rm -r %s/%s/ 2>/dev/null' %
                       (path, folder, path, path, folder))
             logger.good('Update successful!')
