@@ -12,7 +12,7 @@ logger = setup_logger(__name__)
 def updater():
     logger.run('Checking for updates')
     latestCommit = get(
-        'https://raw.githubusercontent.com/s0md3v/XSStrike/master/core/config.py').text
+        'https://raw.githubusercontent.com/Dyst0rti0n/xsstrike/master/core/config.py').text
 
     if changes not in latestCommit:  # just a hack to see if a new version is available
         changelog = re.search(r"changes = '''(.*?)'''", latestCommit)
