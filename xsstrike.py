@@ -171,7 +171,7 @@ elif not recursive and not args_seeds:
     if args_file:
         bruteforcer(target, paramData, payloadList, encoding, headers, delay, timeout)
     else:
-        scan(target, paramData, encoding, headers, delay, timeout, skip=False)
+        scan(target, paramData, encoding, headers, delay, timeout, skipDOM=False, skip=False)
 else:
     if target:
         seedList.append(target)
