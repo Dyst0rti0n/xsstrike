@@ -1,6 +1,9 @@
 import copy
 import re
 from urllib.parse import urlparse, quote, unquote
+from selenium import webdriver
+from selenium.webdriver.common.keys import Keys
+from collections import deque
 
 from core.checker import checker
 from core.colors import end, green, que
@@ -16,6 +19,53 @@ from core.wafDetector import wafDetector
 from core.log import setup_logger
 
 logger = setup_logger(__name__)
+
+# Initialise Chrome WebDriver
+driver = webdriver.Chrome()
+
+def dom_dfs(element):
+    # Perform DFS Traversal to capture elements
+    dom_elements = []
+    
+    dom_elements.append(element)
+
+    # Visit child nodes
+    for child in element.find_elements_by_xpath(".//*"):
+        dom_elements.extend(dom_dfs(child))
+        
+    return dom_elements
+
+def dom_bfs(element):
+    # Perform BFS Traversal to capture elements
+    dom_elements = []
+    queue = deque()
+    
+    queue.append(element)
+    
+    # Traverse the DOM using BFS
+    while queue:
+        current_element = queue.popleft()
+        dom_elements.append(current_element)
+        
+        for child in current_element.find_elements_by_xpath(".//*"):
+            queue.append(child)
+            
+    return dom_elements
+
+def dom(target_url):
+    # Navigate to Target URL
+    driver.get(target_url)
+    
+    # Retrieve the root of DOM element
+    root_element = driver.find_element_by_tag_name('html')
+    
+    # Perform advanced DOM traversal and analysis using DFS
+    dom_elements_dfs = dom_dfs(root_element)
+    
+    # Perform advanced DOM traversal and analysis using BFS
+    dom_elements_bfs = dom_bfs(root_element)
+    
+    return dom_elements_dfs, dom_elements_bfs
 
 def generate_payloads(occurences, response_text):
     vectors = generator(occurences, response_text)
@@ -127,3 +177,5 @@ def scan(target, paramData, encoding, headers, delay, timeout, skipDOM, skip):
                     logger.info('Efficiency: %i' % bestEfficiency)
                     logger.info('Confidence: %i' % confidence)
         logger.no_format('')
+        
+driver.quit()
